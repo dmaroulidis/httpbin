@@ -16,13 +16,15 @@ import uuid
 import argparse
 
 from flask import Flask, Response, request, render_template, redirect, jsonify as flask_jsonify, make_response, url_for
+from flask_common import Common
+from six.moves import range as xrange
 from werkzeug.datastructures import WWWAuthenticate, MultiDict
 from werkzeug.http import http_date
 from werkzeug.wrappers import BaseResponse
-from six.moves import range as xrange
+from raven.contrib.flask import Sentry
 
 from . import filters
-from .helpers import get_headers, status_code, get_dict, get_request_range, check_basic_auth, check_digest_auth, secure_cookie, H, ROBOT_TXT, ANGRY_ASCII
+from .helpers import get_headers, status_code, get_dict, get_request_range, check_basic_auth, check_digest_auth, secure_cookie, H, ROBOT_TXT, ANGRY_ASCII, parse_multi_value_header
 from .utils import weighted_choice
 from .structures import CaseInsensitiveDict
 
@@ -50,6 +52,14 @@ BaseResponse.autocorrect_location_header = False
 tmpl_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
 
 app = Flask(__name__, template_folder=tmpl_dir)
+app.debug = bool(os.environ.get('DEBUG'))
+
+# Setup Flask-Common.
+common = Common(app)
+
+# Send app errors to Sentry.
+if 'SENTRY_DSN' in os.environ:
+    sentry = Sentry(app, dsn=os.environ['SENTRY_DSN'])
 
 # Set up Bugsnag exception tracking, if desired. To use Bugsnag, install the
 # Bugsnag Python client with the command "pip install bugsnag", and set the
@@ -154,6 +164,14 @@ def view_get():
     return jsonify(get_dict('url', 'args', 'headers', 'origin'))
 
 
+@app.route('/anything')
+@app.route('/anything/<path:anything>')
+def view_anything(anything=None):
+    """Returns request data."""
+
+    return jsonify(get_dict('url', 'args', 'headers', 'origin', 'method'))
+
+
 @app.route('/post', methods=('POST',))
 def view_post():
     """Returns POST Data."""
@@ -202,6 +220,15 @@ def view_deflate_encoded_content():
 
     return jsonify(get_dict(
         'origin', 'headers', method=request.method, deflated=True))
+
+
+@app.route('/brotli')
+@filters.brotli
+def view_brotli_encoded_content():
+    """Returns Brotli-Encoded Data."""
+
+    return jsonify(get_dict(
+        'origin', 'headers', method=request.method, brotli=True))
 
 
 @app.route('/redirect/<int:n>')
@@ -294,7 +321,10 @@ def view_status_code(codes):
     """Return status code or random status code if more than one are given"""
 
     if ',' not in codes:
-        code = int(codes)
+        try:
+            code = int(codes)
+        except ValueError:
+            return Response('Invalid status code', status=400)
         return status_code(code)
 
     choices = []
@@ -305,14 +335,17 @@ def view_status_code(codes):
         else:
             code, weight = choice.split(':')
 
-        choices.append((int(code), float(weight)))
+        try:
+            choices.append((int(code), float(weight)))
+        except ValueError:
+            return Response('Invalid status code', status=400)
 
     code = weighted_choice(choices)
 
     return status_code(code)
 
 
-@app.route('/response-headers')
+@app.route('/response-headers', methods=['GET', 'POST'])
 def response_headers():
     """Returns a set of response headers from the query string """
     headers = MultiDict(request.args.items(multi=True))
@@ -468,12 +501,16 @@ def drip():
     duration = float(args.get('duration', 2))
     numbytes = min(int(args.get('numbytes', 10)),(10 * 1024 * 1024)) # set 10MB limit
     code = int(args.get('code', 200))
-    pause = duration / numbytes
+
+    if numbytes <= 0:
+        response = Response('number of bytes must be positive', status=400)
+        return response
 
     delay = float(args.get('delay', 0))
     if delay > 0:
         time.sleep(delay)
 
+    pause = duration / numbytes
     def generate_bytes():
         for i in xrange(numbytes):
             yield u"*".encode('utf-8')
@@ -508,6 +545,23 @@ def cache():
     else:
         return status_code(304)
 
+@app.route('/etag/<etag>', methods=('GET',))
+def etag(etag):
+    """Assumes the resource has the given etag and responds to If-None-Match and If-Match headers appropriately."""
+    if_none_match = parse_multi_value_header(request.headers.get('If-None-Match'))
+    if_match = parse_multi_value_header(request.headers.get('If-Match'))
+
+    if if_none_match:
+        if etag in if_none_match or '*' in if_none_match:
+            return status_code(304)
+    elif if_match:
+        if etag not in if_match and '*' not in if_match:
+            return status_code(412)
+
+    # Special cases don't apply, return normal response
+    response = view_get()
+    response.headers['ETag'] = etag
+    return response
 
 @app.route('/cache/<int:value>')
 def cache_control(value):
@@ -593,12 +647,14 @@ def range_request(numbytes):
 
     request_headers = get_headers()
     first_byte_pos, last_byte_pos = get_request_range(request_headers, numbytes)
+    range_length = (last_byte_pos+1) - first_byte_pos
 
     if first_byte_pos > last_byte_pos or first_byte_pos not in xrange(0, numbytes) or last_byte_pos not in xrange(0, numbytes):
         response = Response(headers={
             'ETag' : 'range%d' % numbytes,
             'Accept-Ranges' : 'bytes',
-            'Content-Range' : 'bytes */%d' % numbytes
+            'Content-Range' : 'bytes */%d' % numbytes,
+            'Content-Length': '0',
             })
         response.status_code = 416
         return response
@@ -625,7 +681,9 @@ def range_request(numbytes):
         'Content-Type': 'application/octet-stream',
         'ETag' : 'range%d' % numbytes,
         'Accept-Ranges' : 'bytes',
-        'Content-Range' : content_range }
+        'Content-Length': str(range_length),
+        'Content-Range' : content_range
+    }
 
     response = Response(generate_bytes(), headers=response_headers)
 

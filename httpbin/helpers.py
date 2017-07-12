@@ -9,6 +9,7 @@ This module provides helper functions for httpbin.
 
 import json
 import base64
+import re
 from hashlib import md5, sha256
 from werkzeug.http import parse_authorization_header
 
@@ -47,7 +48,10 @@ ENV_HEADERS = (
     'X-Forwarded-For',
     'X-Forwarded-Protocol',
     'X-Forwarded-Port',
-    'Runscope-Service'
+    'X-Request-Id',
+    'Via',
+    'Total-Route-Time',
+    'Connect-Time'
 )
 
 ROBOT_TXT = """User-agent: *
@@ -165,7 +169,7 @@ def get_url(request):
 def get_dict(*keys, **extras):
     """Returns request dict of given keys."""
 
-    _keys = ('url', 'args', 'form', 'data', 'origin', 'headers', 'files', 'json')
+    _keys = ('url', 'args', 'form', 'data', 'origin', 'headers', 'files', 'json', 'method')
 
     assert all(map(_keys.__contains__, keys))
     data = request.data
@@ -184,7 +188,8 @@ def get_dict(*keys, **extras):
         origin=request.headers.get('X-Forwarded-For', request.remote_addr),
         headers=get_headers(),
         files=get_files(),
-        json=_json
+        json=_json,
+        method=request.method,
     )
 
     out_d = dict()
@@ -323,7 +328,7 @@ def response(credentails, password, request):
     HA2_value = HA2(credentails, request, algorithm)
     if credentails.get('qop') is None:
         response = H(b":".join([
-            HA1_value.encode('utf-8'), 
+            HA1_value.encode('utf-8'),
             credentails.get('nonce', '').encode('utf-8'),
             HA2_value.encode('utf-8')
         ]), algorithm)
@@ -417,3 +422,13 @@ def get_request_range(request_headers, upper_bound):
 
     return first_byte_pos, last_byte_pos
 
+def parse_multi_value_header(header_str):
+    """Break apart an HTTP header string that is potentially a quoted, comma separated list as used in entity headers in RFC2616."""
+    parsed_parts = []
+    if header_str:
+        parts = header_str.split(',')
+        for part in parts:
+            match = re.search('\s*(W/)?\"?([^"]*)\"?\s*', part)
+            if match is not None:
+                parsed_parts.append(match.group(2))
+    return parsed_parts

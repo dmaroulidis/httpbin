@@ -11,6 +11,7 @@ from hashlib import md5, sha256
 from six import BytesIO
 
 import httpbin
+from httpbin.helpers import parse_multi_value_header
 
 
 @contextlib.contextmanager
@@ -111,17 +112,29 @@ class HttpbinTestCase(unittest.TestCase):
         httpbin.app.debug = True
         self.app = httpbin.app.test_client()
 
+    def get_data(self, response):
+        if 'get_data' in dir(response):
+            return response.get_data()
+        else:
+            return response.data
+
     def test_response_headers_simple(self):
-        response = self.app.get('/response-headers?animal=dog')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers.get_all('animal'), ['dog'])
-        assert json.loads(response.data.decode('utf-8'))['animal'] == 'dog'
+        supported_verbs = ['get', 'post']
+        for verb in supported_verbs:
+            method = getattr(self.app, verb)
+            response = method('/response-headers?animal=dog')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers.get_all('animal'), ['dog'])
+            assert json.loads(response.data.decode('utf-8'))['animal'] == 'dog'
 
     def test_response_headers_multi(self):
-        response = self.app.get('/response-headers?animal=dog&animal=cat')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers.get_all('animal'), ['dog', 'cat'])
-        assert json.loads(response.data.decode('utf-8'))['animal'] == ['dog', 'cat']
+        supported_verbs = ['get', 'post']
+        for verb in supported_verbs:
+            method = getattr(self.app, verb)
+            response = method('/response-headers?animal=dog&animal=cat')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers.get_all('animal'), ['dog', 'cat'])
+            assert json.loads(response.data.decode('utf-8'))['animal'] == ['dog', 'cat']
 
     def test_get(self):
         response = self.app.get('/get', headers={'User-Agent': 'test'})
@@ -132,8 +145,22 @@ class HttpbinTestCase(unittest.TestCase):
         self.assertEqual(data['headers']['Content-Type'], '')
         self.assertEqual(data['headers']['Content-Length'], '0')
         self.assertEqual(data['headers']['User-Agent'], 'test')
-        self.assertEqual(data['origin'], None)
+        # self.assertEqual(data['origin'], None)
         self.assertEqual(data['url'], 'http://localhost/get')
+        self.assertTrue(response.data.endswith(b'\n'))
+
+    def test_anything(self):
+        response = self.app.get('/anything')
+        self.assertEqual(response.status_code, 200)
+        response = self.app.get('/anything/foo/bar')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data.decode('utf-8'))
+        self.assertEqual(data['args'], {})
+        self.assertEqual(data['headers']['Host'], 'localhost')
+        self.assertEqual(data['headers']['Content-Type'], '')
+        self.assertEqual(data['headers']['Content-Length'], '0')
+        self.assertEqual(data['url'], 'http://localhost/anything/foo/bar')
+        self.assertEqual(data['method'], 'GET')
         self.assertTrue(response.data.endswith(b'\n'))
 
     def test_base64(self):
@@ -230,6 +257,10 @@ class HttpbinTestCase(unittest.TestCase):
         response = self.app.get('/gzip')
         self.assertEqual(response.status_code, 200)
 
+    def test_brotli(self):
+        response = self.app.get('/brotli')
+        self.assertEqual(response.status_code, 200)
+
     def test_digest_auth_with_wrong_password(self):
         auth_header = 'Digest username="user",realm="wrong",nonce="wrong",uri="/digest-auth/user/passwd/MD5",response="wrong",opaque="wrong"'
         response = self.app.get(
@@ -303,18 +334,24 @@ class HttpbinTestCase(unittest.TestCase):
     def test_drip(self):
         response = self.app.get('/drip?numbytes=400&duration=2&delay=1')
         self.assertEqual(response.content_length, 400)
-        self.assertEqual(len(response.get_data()), 400)
+        self.assertEqual(len(self.get_data(response)), 400)
         self.assertEqual(response.status_code, 200)
+
+    def test_drip_with_invalid_numbytes(self):
+        for bad_num in -1, 0:
+            uri = '/drip?numbytes={0}&duration=2&delay=1'.format(bad_num)
+            response = self.app.get(uri)
+            self.assertEqual(response.status_code, 400)
 
     def test_drip_with_custom_code(self):
         response = self.app.get('/drip?numbytes=400&duration=2&code=500')
         self.assertEqual(response.content_length, 400)
-        self.assertEqual(len(response.get_data()), 400)
+        self.assertEqual(len(self.get_data(response)), 400)
         self.assertEqual(response.status_code, 500)
 
     def test_get_bytes(self):
         response = self.app.get('/bytes/1024')
-        self.assertEqual(len(response.get_data()), 1024)
+        self.assertEqual(len(self.get_data(response)), 1024)
         self.assertEqual(response.status_code, 200)
 
     def test_bytes_with_seed(self):
@@ -333,7 +370,7 @@ class HttpbinTestCase(unittest.TestCase):
 
     def test_stream_bytes(self):
         response = self.app.get('/stream-bytes/1024')
-        self.assertEqual(len(response.get_data()), 1024)
+        self.assertEqual(len(self.get_data(response)), 1024)
         self.assertEqual(response.status_code, 200)
 
     def test_stream_bytes_with_seed(self):
@@ -372,6 +409,14 @@ class HttpbinTestCase(unittest.TestCase):
         for m in methods:
             response = self.app.open(path='/status/418', method=m)
             self.assertEqual(response.status_code, 418)
+
+    def test_status_endpoint_invalid_code(self):
+        response = self.app.get(path='/status/4!9')
+        self.assertEqual(response.status_code, 400)
+
+    def test_status_endpoint_invalid_codes(self):
+        response = self.app.get(path='/status/200,402,foo')
+        self.assertEqual(response.status_code, 400)
 
     def test_xml_endpoint(self):
         response = self.app.get(path='/xml')
@@ -445,13 +490,13 @@ class HttpbinTestCase(unittest.TestCase):
         self.assertEqual(response1.headers.get('ETag'), 'range1234')
         self.assertEqual(response1.headers.get('Content-range'), 'bytes 0-1233/1234')
         self.assertEqual(response1.headers.get('Accept-ranges'), 'bytes')
-        self.assertEqual(len(response1.get_data()), 1234)
-        
+        self.assertEqual(len(self.get_data(response1)), 1234)
+
         response2 = self.app.get('/range/1234')
         self.assertEqual(response2.status_code, 200)
         self.assertEqual(response2.headers.get('ETag'), 'range1234')
-        self.assertEqual(response1.get_data(), response2.get_data())
-    
+        self.assertEqual(self.get_data(response1), self.get_data(response2))
+
     def test_request_range_with_parameters(self):
         response = self.app.get(
             '/range/100?duration=1.5&chunk_size=5',
@@ -462,8 +507,9 @@ class HttpbinTestCase(unittest.TestCase):
         self.assertEqual(response.headers.get('ETag'), 'range100')
         self.assertEqual(response.headers.get('Content-range'), 'bytes 10-24/100')
         self.assertEqual(response.headers.get('Accept-ranges'), 'bytes')
-        self.assertEqual(response.get_data(), 'klmnopqrstuvwxy'.encode('utf8'))
-    
+        self.assertEqual(response.headers.get('Content-Length'), '15')
+        self.assertEqual(self.get_data(response), 'klmnopqrstuvwxy'.encode('utf8'))
+
     def test_request_range_first_15_bytes(self):
         response = self.app.get(
             '/range/1000',
@@ -472,9 +518,9 @@ class HttpbinTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 206)
         self.assertEqual(response.headers.get('ETag'), 'range1000')
-        self.assertEqual(response.get_data(), 'abcdefghijklmnop'.encode('utf8'))
+        self.assertEqual(self.get_data(response), 'abcdefghijklmnop'.encode('utf8'))
         self.assertEqual(response.headers.get('Content-range'), 'bytes 0-15/1000')
-    
+
     def test_request_range_open_ended_last_6_bytes(self):
         response = self.app.get(
             '/range/26',
@@ -483,9 +529,10 @@ class HttpbinTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 206)
         self.assertEqual(response.headers.get('ETag'), 'range26')
-        self.assertEqual(response.get_data(), 'uvwxyz'.encode('utf8'))
+        self.assertEqual(self.get_data(response), 'uvwxyz'.encode('utf8'))
         self.assertEqual(response.headers.get('Content-range'), 'bytes 20-25/26')
-    
+        self.assertEqual(response.headers.get('Content-Length'), '6')
+
     def test_request_range_suffix(self):
         response = self.app.get(
             '/range/26',
@@ -494,9 +541,10 @@ class HttpbinTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 206)
         self.assertEqual(response.headers.get('ETag'), 'range26')
-        self.assertEqual(response.get_data(), 'vwxyz'.encode('utf8'))
+        self.assertEqual(self.get_data(response), 'vwxyz'.encode('utf8'))
         self.assertEqual(response.headers.get('Content-range'), 'bytes 21-25/26')
-    
+        self.assertEqual(response.headers.get('Content-Length'), '5')
+
     def test_request_out_of_bounds(self):
         response = self.app.get(
             '/range/26',
@@ -506,15 +554,16 @@ class HttpbinTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 416)
         self.assertEqual(response.headers.get('ETag'), 'range26')
-        self.assertEqual(len(response.get_data()), 0)
+        self.assertEqual(len(self.get_data(response)), 0)
         self.assertEqual(response.headers.get('Content-range'), 'bytes */26')
-        
+        self.assertEqual(response.headers.get('Content-Length'), '0')
+
         response = self.app.get(
             '/range/26',
             headers={ 'Range': 'bytes=32-40',
             }
         )
-        
+
         self.assertEqual(response.status_code, 416)
         response = self.app.get(
             '/range/26',
@@ -534,9 +583,85 @@ class HttpbinTestCase(unittest.TestCase):
         with _setenv('HTTPBIN_TRACKING', '1'):
             response = self.app.get('/')
         data = response.data.decode('utf-8')
-        self.assertIn('google-analytics', data)
         self.assertIn('perfectaudience', data)
 
+    def test_etag_if_none_match_matches(self):
+        response = self.app.get(
+            '/etag/abc',
+            headers={ 'If-None-Match': 'abc' }
+        )
+        self.assertEqual(response.status_code, 304)
+
+    def test_etag_if_none_match_matches_list(self):
+        response = self.app.get(
+            '/etag/abc',
+            headers={ 'If-None-Match': '"123", "abc"' }
+        )
+        self.assertEqual(response.status_code, 304)
+
+    def test_etag_if_none_match_matches_star(self):
+        response = self.app.get(
+            '/etag/abc',
+            headers={ 'If-None-Match': '*' }
+        )
+        self.assertEqual(response.status_code, 304)
+
+    def test_etag_if_none_match_w_prefix(self):
+        response = self.app.get(
+            '/etag/c3piozzzz',
+            headers={ 'If-None-Match': 'W/"xyzzy", W/"r2d2xxxx", W/"c3piozzzz"' }
+        )
+        self.assertEqual(response.status_code, 304)
+
+    def test_etag_if_none_match_has_no_match(self):
+        response = self.app.get(
+            '/etag/abc',
+            headers={ 'If-None-Match': '123' }
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_etag_if_match_matches(self):
+        response = self.app.get(
+            '/etag/abc',
+            headers={ 'If-Match': 'abc' }
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_etag_if_match_matches_list(self):
+        response = self.app.get(
+            '/etag/abc',
+            headers={ 'If-Match': '"123", "abc"' }
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_etag_if_match_matches_star(self):
+        response = self.app.get(
+            '/etag/abc',
+            headers={ 'If-Match': '*' }
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_etag_if_match_has_no_match(self):
+        response = self.app.get(
+            '/etag/abc',
+            headers={ 'If-Match': '123' }
+        )
+        self.assertEqual(response.status_code, 412)
+
+    def test_etag_with_no_headers(self):
+        response = self.app.get(
+            '/etag/abc'
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get('ETag'), 'abc')
+
+    def test_parse_multi_value_header(self):
+        self.assertEqual(parse_multi_value_header('xyzzy'), [ "xyzzy" ])
+        self.assertEqual(parse_multi_value_header('"xyzzy"'), [ "xyzzy" ])
+        self.assertEqual(parse_multi_value_header('W/"xyzzy"'), [ "xyzzy" ])
+        self.assertEqual(parse_multi_value_header('"xyzzy", "r2d2xxxx", "c3piozzzz"'), [ "xyzzy", "r2d2xxxx", "c3piozzzz" ])
+        self.assertEqual(parse_multi_value_header('W/"xyzzy", W/"r2d2xxxx", W/"c3piozzzz"'), [ "xyzzy", "r2d2xxxx", "c3piozzzz" ])
+        self.assertEqual(parse_multi_value_header('*'), [ "*" ])
 
 if __name__ == '__main__':
     unittest.main()

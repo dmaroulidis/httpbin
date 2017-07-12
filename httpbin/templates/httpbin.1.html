@@ -1,6 +1,12 @@
 <div class='mp'>
 <h1>httpbin(1): HTTP Request &amp; Response Service</h1>
-<p>Freely hosted in <a href="http://httpbin.org">HTTP</a>, <a href="https://httpbin.org">HTTPS</a>, <a href="https://http2bin.org">HTTP/2</a> &amp; <a href="http://eu.httpbin.org/">EU</a> flavors by <a href="https://www.runscope.com/">Runscope</a></p>
+<p>Freely hosted in <a href="http://httpbin.org">HTTP</a>, <a href="https://httpbin.org">HTTPS</a>, &amp; <a href="http://eu.httpbin.org/">EU</a> flavors by <a href="http://kennethreitz.org">Kenneth Reitz</a> &amp; <a href="https://www.runscope.com/">Runscope</a>.</p>
+
+<h2 id="ENDPOINTS">BONUSPOINTS</h2>
+
+<ul>
+<li><a href="https://now.httpbin.org/" data-bare-link="true"><code>now.httpbin.org</code></a> The current time, in a variety of formats.</li>
+</ul>
 
 <h2 id="ENDPOINTS">ENDPOINTS</h2>
 
@@ -14,9 +20,12 @@
 <li><code>/patch</code> Returns PATCH data.</li>
 <li><code>/put</code> Returns PUT data.</li>
 <li><code>/delete</code> Returns DELETE data</li>
+<li><a href="{{ url_for('view_anything') }}" data-bare-link="true"><code>/anything</code></a> Returns request data, including method used.</li>
+<li><code>/anything/:anything</code> Returns request data, including the URL.</li>
 <li><a href="{{ url_for('encoding') }}"><code>/encoding/utf8</code></a> Returns page containing UTF-8 data.</li>
 <li><a href="{{ url_for('view_gzip_encoded_content') }}" data-bare-link="true"><code>/gzip</code></a> Returns gzip-encoded data.</li>
 <li><a href="{{ url_for('view_deflate_encoded_content') }}" data-bare-link="true"><code>/deflate</code></a> Returns deflate-encoded data.</li>
+<li><a href="{{ url_for('view_brotli_encoded_content') }}" data-bare-link="true"><code>/brotli</code></a> Returns brotli-encoded data.</li>
 <li><a href="{{ url_for('view_status_code', codes='418') }}"><code>/status/:code</code></a> Returns given HTTP Status code.</li>
 <li><a href="{{ url_for('response_headers', **{'Content-Type': 'text/plain; charset=UTF-8', 'Server': 'httpbin'}) }}"><code>/response-headers?key=val</code></a> Returns given response headers.</li>
 <li><a href="{{ url_for('redirect_n_times', n=6) }}"><code>/redirect/:n</code></a> 302 Redirects <em>n</em> times.</li>
@@ -39,9 +48,10 @@
 <li><a href="{{ url_for('view_robots_page') }}" data-bare-link="true"><code>/robots.txt</code></a> Returns some robots.txt rules.</li>
 <li><a href="{{ url_for('view_deny_page') }}" data-bare-link="true"><code>/deny</code></a> Denied by robots.txt file.</li>
 <li><a href="{{ url_for('cache') }}" data-bare-link="true"><code>/cache</code></a> Returns 200 unless an If-Modified-Since or If-None-Match header is provided, when it returns a 304.</li>
+<li><a href="{{ url_for('etag', etag='etag') }}"><code>/etag/:etag</code></a> Assumes the resource has the given etag and responds to If-None-Match header with a 200 or 304 and If-Match with a 200 or 412 as appropriate.</li>
 <li><a href="{{ url_for('cache_control', value=60) }}"><code>/cache/:n</code></a> Sets a Cache-Control header for <em>n</em> seconds.</li>
 <li><a href="{{ url_for('random_bytes', n=1024) }}"><code>/bytes/:n</code></a> Generates <em>n</em> random bytes of binary data, accepts optional <em>seed</em> integer parameter.</li>
-<li><a href="{{ url_for('stream_random_bytes', n=1024) }}"><code>/stream-bytes/:n</code></a> Streams <em>n</em> random bytes of binary data, accepts optional <em>seed</em> and <em>chunk_size</em> integer parameters.</li>
+<li><a href="{{ url_for('stream_random_bytes', n=1024) }}"><code>/stream-bytes/:n</code></a> Streams <em>n</em> random bytes of binary data in chunked encoding, accepts optional <em>seed</em> and <em>chunk_size</em> integer parameters.</li>
 <li><a href="{{ url_for('links', n=10) }}"><code>/links/:n</code></a> Returns page containing <em>n</em> HTML links.</li>
 <li><a href="{{ url_for('image') }}"><code>/image</code></a> Returns page containing an image based on sent Accept header.</li>
 <li><a href="{{ url_for('image_png') }}"><code>/image/png</code></a> Returns a PNG image.</li>
@@ -51,7 +61,6 @@
 <li><a href="{{ url_for('view_forms_post') }}" data-bare-link="true"><code>/forms/post</code></a> HTML form that submits to <em>/post</em></li>
 <li><a href="{{ url_for('xml') }}" data-bare-link="true"><code>/xml</code></a> Returns some XML</li>
 </ul>
-
 
 <h2 id="DESCRIPTION">DESCRIPTION</h2>
 
@@ -133,20 +142,10 @@ Content-Length: 135
 $ gunicorn httpbin:app
 </code></pre>
 
-<h2 id="Changelog">Changelog</h2>
-
-<ul>
-<li>0.2.0: Added an XML endpoint.  Also fixes several bugs with unicode, CORS headers, digest auth, and more.</li>
-<li>0.1.2: Fix a couple Python3 bugs with the random byte endpoints, fix a bug when uploading files without a Content-Type header set.</li>
-<li>0.1.1: Added templates as data in setup.py</li>
-<li>0.1.0: Added python3 support and (re)publish on PyPI</li>
-</ul>
-
 
 <h2 id="AUTHOR">AUTHOR</h2>
 
-<p>A <a href="https://www.runscope.com/community">Runscope Community Project</a>.</p>
-<p>Originally created by <a href="http://kennethreitz.com/">Kenneth Reitz</a>.</p>
+<p>A <a href="http://kennethreitz.com/">Kenneth Reitz</a> project.</p>
 
 <h2 id="SEE-ALSO">SEE ALSO</h2>
 
